@@ -7,10 +7,10 @@ struct MemInfo {
 }
 
 fn main() {
-    let meminfo = read_mem_info();
-    println!("Total: {} kB", meminfo.total_kb);
-    println!("Avail: {} kB", meminfo.available_kb);
-    println!("Free: {} kB", meminfo.free_kb);
+    let mem_info = read_mem_info();
+    println!("Total: {} kB", mem_info.total_kb);
+    println!("Avail: {} kB", mem_info.available_kb);
+    println!("Free: {} kB", mem_info.free_kb);
 }
 
 fn read_mem_info() -> MemInfo {
@@ -49,7 +49,7 @@ fn read_mem_linux() -> MemInfo {
                 mem_info.free_kb = parts[1].parse::<u64>().unwrap();
             } else if parts[0] == "MemAvailable:" {
                 mem_info.available_kb = parts[1].parse::<u64>().unwrap();
-            }
+            } 
         }
     });
     
@@ -57,7 +57,7 @@ fn read_mem_linux() -> MemInfo {
 }
 
 fn read_mem_freebsd() -> MemInfo {
-    let mut meminfo = MemInfo {
+    let mut mem_info = MemInfo {
         total_kb: 0,
         free_kb: 0,
         available_kb: 0,
@@ -69,25 +69,37 @@ fn read_mem_freebsd() -> MemInfo {
         .expect("Failed to execute sysctl command");
 
     if !output.status.success() {
-        return meminfo;
+        return mem_info;
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
+    let mut page_size: u64 = 0;
+    let mut mem_inactive: u64 = 0;
+    let mut mem_cache: u64 = 0;
+    let mut mem_free: u64 = 0;
 
     stdout.lines().for_each(|line| {
         let parts: Vec<&str> = line.split_whitespace().collect();
-        if parts.len() == 3 {
-            if parts[0] == "MemTotal:" {
-                meminfo.total_kb = parts[1].parse::<u64>().unwrap();
-            } else if parts[0] == "MemFree:" {
-                meminfo.free_kb = parts[1].parse::<u64>().unwrap();
-            } else if parts[0] == "MemAvailable:" {
-                meminfo.available_kb = parts[1].parse::<u64>().unwrap();
+        if parts.len() == 2 {
+            if parts[0] == "vm.stats.vm.v_inactive_count:" {
+                mem_inactive = parts[1].parse::<u64>().unwrap();
+            } else if parts[0] == "vm.stats.vm.v_cache_count:" {
+                mem_cache = parts[1].parse::<u64>().unwrap();
+            } else if parts[0] == "vm.stats.vm.v_free_count:" {
+                mem_free = parts[1].parse::<u64>().unwrap();
+            } else if parts[0] == "hw.pagesize:" {
+                page_size = parts[1].parse::<u64>().unwrap();
+            } else if parts[0] == "hw.physmem:" {
+                mem_info.total_kb = parts[1].parse::<u64>().unwrap() / 1000;
             }
         }
     });
+
+    mem_info.available_kb = ((mem_inactive + mem_cache + mem_free) * page_size) / 1000;
+    mem_info.free_kb = (mem_free * page_size) / 1000;
+    // used = total_kb - available_kb
     
-    return meminfo;
+    return mem_info;
 }
 
 fn read_mem_macos() -> MemInfo {
