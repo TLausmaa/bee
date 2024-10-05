@@ -1,0 +1,1 @@
+Supports FreeBSD and Linux.
