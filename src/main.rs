@@ -1,4 +1,11 @@
-use std::{fs, process::Command};
+use std::{thread, fs, process::Command, time};
+
+use lettre::message::header::ContentType;
+use lettre::transport::smtp::authentication::Credentials;
+use lettre::{Message, SmtpTransport, Transport};
+
+mod args;
+mod config;
 
 struct MemInfo {
     total_kb: u64,
@@ -7,10 +14,25 @@ struct MemInfo {
 }
 
 fn main() {
-    let mem_info = read_mem_info();
-    println!("Total: {} kB", mem_info.total_kb);
-    println!("Avail: {} kB", mem_info.available_kb);
-    println!("Free: {} kB", mem_info.free_kb);
+    let args = args::Args::parse();
+    println!("Bee is watching memory usage now.");
+
+    loop {
+        thread::sleep(time::Duration::from_secs(args.interval));
+        let mem_info = read_mem_info();
+        analyze_mem(mem_info);
+    }
+}
+
+fn analyze_mem(mem_info: MemInfo) {
+    let used_kb = mem_info.total_kb - mem_info.available_kb;
+    let used_percent = (used_kb as f64 / mem_info.total_kb as f64) * 100.0;
+    println!("Total: {} KB, Free: {} KB, Available: {} KB, Used: {} KB, Used%: {:.2}%", 
+        mem_info.total_kb, mem_info.free_kb, mem_info.available_kb, used_kb, used_percent);
+
+    if used_percent > 90.0 {
+        println!("High memory usage detected: {:.2}%", used_percent);
+    }
 }
 
 fn read_mem_info() -> MemInfo {
@@ -109,4 +131,34 @@ fn read_mem_macos() -> MemInfo {
         free_kb: 0,
         available_kb: 0,
     };
+}
+
+fn send_email() {
+    let config = config::Config::read().email;
+
+    let email = Message::builder()
+        .from(config.from.parse().unwrap())
+        .reply_to(config.from.parse().unwrap())
+        .to(config.to.parse().unwrap())
+        .subject("Hello from Rust!")
+        .header(ContentType::TEXT_PLAIN)
+        .body(String::from("Be happy!"))
+        .unwrap();
+
+    let creds = Credentials::new(
+        config.smtp_email.to_owned(), 
+        config.smtp_password.to_owned()
+    );
+
+    // Open a remote connection to gmail
+    let mailer = SmtpTransport::relay(&config.smtp_server)
+        .unwrap()
+        .credentials(creds)
+        .build();
+
+    // Send the email
+    match mailer.send(&email) {
+        Ok(_) => println!("Email sent successfully."),
+        Err(e) => panic!("Could not send email: {e:?}"),
+    }
 }
