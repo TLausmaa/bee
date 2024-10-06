@@ -14,4 +14,4 @@ TODO: OpenBSD, NetBSD.
 
 **Polling interval:** Supply this with a command line argument. `bee -i 5` for every 5 seconds etc.
 
-**Email alerting:** Copy the included `.env.example` to `.env` and set parameters as you want for notifications.s
+**Email alerting:** Copy the included `.env.example` to `.env` and set parameters as you want for notifications.
