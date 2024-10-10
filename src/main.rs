@@ -1,4 +1,5 @@
 use std::{thread, fs, process::Command, time};
+use chrono::prelude::*;
 
 use lettre::message::header::ContentType;
 use lettre::transport::smtp::authentication::Credentials;
@@ -13,25 +14,38 @@ struct MemInfo {
     available_kb: u64,
 }
 
+struct RuntimeCache {
+    last_alert: Option<DateTime<Utc>>,
+}
+
 fn main() {
     let args = args::Args::parse();
+    let mut runtime_cache = RuntimeCache { last_alert: None };
+
     println!("Bee is watching memory usage now.");
+    println!("Polling interval: {} seconds", args.interval);
+    println!("Alert threshold: {:.2}%", args.threshold);
 
     loop {
         thread::sleep(time::Duration::from_secs(args.interval));
         let mem_info = read_mem_info();
-        analyze_mem(mem_info);
+        analyze_mem(mem_info, &args, &mut runtime_cache);
     }
 }
 
-fn analyze_mem(mem_info: MemInfo) {
+fn analyze_mem(mem_info: MemInfo, args: &args::Args, runtime_cache: &mut RuntimeCache) {
     let used_kb = mem_info.total_kb - mem_info.available_kb;
     let used_percent = (used_kb as f64 / mem_info.total_kb as f64) * 100.0;
-    println!("Total: {} KB, Free: {} KB, Available: {} KB, Used: {} KB, Used%: {:.2}%", 
-        mem_info.total_kb, mem_info.free_kb, mem_info.available_kb, used_kb, used_percent);
 
-    if used_percent > 90.0 {
-        println!("High memory usage detected: {:.2}%", used_percent);
+    if args.verbose {
+        println!("Total: {} KB, Free: {} KB, Available: {} KB, Used: {} KB, Used%: {:.2}%", 
+            mem_info.total_kb, mem_info.free_kb, mem_info.available_kb, used_kb, used_percent);
+    }
+
+    if used_percent >= args.threshold {
+        if args.verbose {
+            send_email(used_percent, runtime_cache);
+        }
     }
 }
 
@@ -133,16 +147,31 @@ fn read_mem_macos() -> MemInfo {
     };
 }
 
-fn send_email() {
+fn send_email(used_percent: f64, runtime_cache: &mut RuntimeCache) {
+    let datetime = Utc::now();
+    
+    if runtime_cache.last_alert != None {
+        let last_alert = runtime_cache.last_alert.unwrap();
+        let duration = datetime.signed_duration_since(last_alert).num_minutes();
+        if duration < 60 {
+            return;
+        }
+    }
+
     let config = config::Config::read().email;
+    let operating_system = std::env::consts::OS;
+    let subject = format!("Bee alert 🐝: high memory usage on {}", operating_system);
+    let body = format!(
+        r#"Memory usage on {} exceeded alerting threshold {:.2}% on {}.
+Please check the system."#, operating_system, used_percent, datetime);
 
     let email = Message::builder()
         .from(config.from.parse().unwrap())
         .reply_to(config.from.parse().unwrap())
         .to(config.to.parse().unwrap())
-        .subject("Hello from Rust!")
+        .subject(subject)
         .header(ContentType::TEXT_PLAIN)
-        .body(String::from("Be happy!"))
+        .body(body)
         .unwrap();
 
     let creds = Credentials::new(
@@ -150,15 +179,17 @@ fn send_email() {
         config.smtp_password.to_owned()
     );
 
-    // Open a remote connection to gmail
     let mailer = SmtpTransport::relay(&config.smtp_server)
         .unwrap()
         .credentials(creds)
         .build();
 
-    // Send the email
     match mailer.send(&email) {
-        Ok(_) => println!("Email sent successfully."),
-        Err(e) => panic!("Could not send email: {e:?}"),
+        Ok(_) => {
+            runtime_cache.last_alert = Some(datetime);
+        },
+        Err(e) => {
+            eprintln!("Could not send email alert: {e:?}");
+        },
     }
 }
